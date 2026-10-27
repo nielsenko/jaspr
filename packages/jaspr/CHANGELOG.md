@@ -1,5 +1,6 @@
 ## Unreleased 0.24.0-beta.1
 
+- Added `--proxy-port` to `jaspr serve` and `jaspr daemon`, so a server started with `--skip-server` can be given `JASPR_PROXY_PORT` up front.
 - Fixed issue with hot-reload in client mode.
 
 ## 0.24.0-beta.0

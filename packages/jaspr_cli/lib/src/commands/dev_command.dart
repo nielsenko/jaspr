@@ -48,6 +48,13 @@ abstract class DevCommand extends BaseCommand with ProxyHelper {
           'Specify a port to run the dev server on. '
           'Defaults to {jaspr.port} from pubspec.yaml or "$defaultServePort".',
     );
+    argParser.addOption(
+      'proxy-port',
+      help:
+          'Specify the port of the proxy serving the client files (only in server mode). '
+          'Defaults to the first available port from "$serverProxyPort". '
+          'With --skip-server, start the server with this port as JASPR_PROXY_PORT.',
+    );
     argParser.addFlag('debug', abbr: 'd', help: 'Serves the app in debug mode.', negatable: false);
     argParser.addFlag('release', abbr: 'r', help: 'Serves the app in release mode.', negatable: false);
     argParser.addFlag('experimental-wasm', help: 'Compile to wasm', negatable: false);
@@ -110,6 +117,28 @@ abstract class DevCommand extends BaseCommand with ProxyHelper {
 
   bool get launchInChrome;
 
+  /// Parses a port option, or logs why it cannot be used and returns null.
+  Future<int?> _parsePort(String value, {required bool checkAvailable}) async {
+    final parsed = int.tryParse(value);
+    if (parsed == null || parsed < 1 || parsed > 65535) {
+      logger.write(
+        'Invalid port "$value". Must be a number between 1 and 65535.',
+        tag: Tag.cli,
+        level: Level.error,
+      );
+      return null;
+    }
+    if (checkAvailable && !await isPortAvailable(parsed)) {
+      logger.write(
+        'Port $value is already in use.\nPlease quit the running process or choose a different port.',
+        tag: Tag.cli,
+        level: Level.error,
+      );
+      return null;
+    }
+    return parsed;
+  }
+
   DevStatus _currentStatus = DevStatus.ready;
   late int port;
 
@@ -126,32 +155,33 @@ abstract class DevCommand extends BaseCommand with ProxyHelper {
 
     final explicitPort = argResults?.option('port');
     if (explicitPort != null) {
-      final parsed = int.tryParse(explicitPort);
-      if (parsed == null || parsed < 1 || parsed > 65535) {
-        logger.write(
-          'Invalid port "$explicitPort". Must be a number between 1 and 65535.',
-          tag: Tag.cli,
-          level: Level.error,
-        );
-        return 1;
-      }
-      if (shouldCheckPort && !await isPortAvailable(parsed)) {
-        logger.write(
-          'Port $explicitPort is already in use.\nPlease quit the running process or choose a different port.',
-          tag: Tag.cli,
-          level: Level.error,
-        );
-        return 1;
-      }
+      final parsed = await _parsePort(explicitPort, checkAvailable: shouldCheckPort);
+      if (parsed == null) return 1;
       port = parsed;
     } else {
       final defaultPort = int.tryParse(project.port ?? defaultServePort) ?? 8080;
       port = shouldCheckPort ? await findAvailablePort(defaultPort) : defaultPort;
     }
 
-    final proxyPort = project.requireMode == JasprMode.client
-        ? port
-        : await findAvailablePort(int.parse(serverProxyPort), exclude: [port]);
+    final explicitProxyPort = argResults?.option('proxy-port');
+    final int proxyPort;
+    if (project.requireMode == JasprMode.client) {
+      proxyPort = port;
+    } else if (explicitProxyPort != null) {
+      final parsed = await _parsePort(explicitProxyPort, checkAvailable: true);
+      if (parsed == null) return 1;
+      if (parsed == port) {
+        logger.write(
+          'Port $explicitProxyPort cannot be used for both the server and the proxy.',
+          tag: Tag.cli,
+          level: Level.error,
+        );
+        return 1;
+      }
+      proxyPort = parsed;
+    } else {
+      proxyPort = await findAvailablePort(int.parse(serverProxyPort), exclude: [port]);
+    }
 
     final flutterPort = project.flutterMode == FlutterMode.embedded
         ? await findAvailablePort(int.parse(flutterProxyPort), exclude: [port, proxyPort])

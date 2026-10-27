@@ -630,6 +630,77 @@ void main() {
       });
     });
 
+    test('serves project with explicit --proxy-port in server mode', () async {
+      await io.runZoned(() async {
+        io.setupFakeProject('myapp', mode: 'server');
+        io.stubDartSDK();
+        final buildDaemon = io.setupFakeBuildDaemon(verifyArgs: buildRunnerDartArgs);
+        final server = io.stubFakeServer(proxyPort: '5600');
+
+        final serveResult = runner.run(['serve', '--verbose', '--proxy-port', '5600']);
+
+        await expectLater(
+          io.stdout.queue,
+          emitsInOrderWithTimeout([
+            'Starting myapp in server rendering mode.',
+            '[BUILDER] Starting web compilers...',
+            '[BUILDER] Connecting to the build daemon...',
+            '[BUILDER] Starting initial build...',
+          ]),
+        );
+
+        await io.runInitialBuild(buildDaemon);
+
+        expect(io.stdout.queue, emits('[BUILDER] Done building web assets.'));
+
+        await expectLater(
+          io.serverSockets.next,
+          completion(isA<FakeServerSocket>().having((s) => s.port, 'port', 5600)),
+        );
+
+        await io.expectServerStarted(server);
+
+        server.exit(0);
+
+        expect(await serveResult, equals(0));
+      });
+    });
+
+    test('fails when explicit --proxy-port is in use', () async {
+      await io.runZoned(() async {
+        final stderr = io.stderr.queue;
+        io.setupFakeProject('myapp', mode: 'server');
+        io.stubDartSDK();
+        io.inUsePorts.add(5600);
+
+        final serveResult = runner.run(['serve', '--proxy-port', '5600']);
+
+        await expectLater(
+          stderr,
+          emitsThrough('[LOG] [ERROR] Port 5600 is already in use.'),
+        );
+
+        expect(await serveResult, equals(1));
+      });
+    });
+
+    test('fails when explicit --proxy-port equals --port', () async {
+      await io.runZoned(() async {
+        final stderr = io.stderr.queue;
+        io.setupFakeProject('myapp', mode: 'server');
+        io.stubDartSDK();
+
+        final serveResult = runner.run(['serve', '--port', '3000', '--proxy-port', '3000']);
+
+        await expectLater(
+          stderr,
+          emitsThrough('[LOG] [ERROR] Port 3000 cannot be used for both the server and the proxy.'),
+        );
+
+        expect(await serveResult, equals(1));
+      });
+    });
+
     test('fails when explicit --port is invalid or out of range', () async {
       await io.runZoned(() async {
         final stderr = io.stderr.queue;
